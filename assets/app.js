@@ -369,10 +369,9 @@
   }
 
   // ==================== Supabase 配置 ====================
-  // 请在 https://supabase.com 创建项目后，填入以下信息
-  const SUPABASE_URL = 'YOUR_SUPABASE_URL';      // 例如: https://xxxxx.supabase.co
-  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // 在 Settings > API 中找到
-  const USE_SUPABASE = false; // 设为 true 启用远程数据库，false 使用本地 localStorage
+  const SUPABASE_URL = 'https://wzyexxikerhqthqyjcrp.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6eWV4eGlrZXJocXRocXlqY3JwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzNDg2MjMsImV4cCI6MjA5NjkyNDYyM30.3zkgeJQUUSSyqAlblt6g8phslRgdfDSPnUpwJleB6W0';
+  const USE_SUPABASE = true;
 
   let supabase = null;
   if (USE_SUPABASE && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
