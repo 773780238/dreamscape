@@ -171,6 +171,7 @@
     color: var(--muted);
   }
   .checkbox-label input { accent-color: var(--accent); }
+  #anonymousOption:has(#isAnonymous:checked) ~ #usernameOption { display: none !important; }
 
   /* Dream list */
   .dream-item {
@@ -621,7 +622,7 @@
             匿名上传（不显示用户名）
           </label>
         </div>
-        <div class="form-group" id="usernameOption" style="display:none;">
+        <div class="form-group" id="usernameOption">
           <label data-i18n="displayName">显示用户名</label>
           <input type="text" class="form-control" id="displayName" placeholder="输入要显示的用户名" data-i18n-placeholder="displayNamePlaceholder">
         </div>
