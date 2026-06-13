@@ -88,35 +88,39 @@
 
   /* Main Layout */
   .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-  .section { display: none; width: 100%; }
+  .section { display: none; position: relative; }
   .section.active { display: block; }
-  /* Section background images */
-  #home.active, #upload.active, #explore.active, #analytics.active, #mydreams.active {
+  /* Section background images - full bleed */
+  .section.active::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -1;
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
-    background-attachment: fixed;
-    min-height: 100vh;
-    padding: 2rem 0;
   }
-  #home.active {
-    background-image: linear-gradient(180deg, rgba(15,23,42,0.2) 0%, rgba(15,23,42,0.8) 50%, var(--bg) 100%),
+  #home.active::before {
+    background-image: linear-gradient(180deg, rgba(15,23,42,0.15) 0%, rgba(15,23,42,0.75) 50%, rgba(15,23,42,0.95) 100%),
                 url('assets/bg-home.png');
   }
-  #upload.active {
-    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+  #upload.active::before {
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.65) 0%, rgba(15,23,42,0.85) 100%),
                 url('assets/bg-upload.png');
   }
-  #explore.active {
-    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+  #explore.active::before {
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.65) 0%, rgba(15,23,42,0.85) 100%),
                 url('assets/bg-explore.png');
   }
-  #analytics.active {
-    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+  #analytics.active::before {
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.65) 0%, rgba(15,23,42,0.85) 100%),
                 url('assets/bg-analytics.png');
   }
-  #mydreams.active {
-    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+  #mydreams.active::before {
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.65) 0%, rgba(15,23,42,0.85) 100%),
                 url('assets/bg-mydreams.png');
   }
 
