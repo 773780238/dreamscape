@@ -26,6 +26,9 @@
     line-height: 1.6;
     min-height: 100vh;
   }
+  *, *::before, *::after { cursor: url('assets/cursors/default.png') 2 2, auto !important; }
+  a, button, select, [onclick], .nav a, .btn, .tab, .keyword-tag, label, option, summary, details { cursor: url('assets/cursors/pointer.png') 6 2, pointer !important; }
+  input[type='text'], input[type='password'], input[type='date'], textarea, [contenteditable='true'] { cursor: url('assets/cursors/text.png') 12 12, text !important; }
   body[data-lang="en"] { font-family: "Inter", "Segoe UI", sans-serif; }
   body[data-lang="ja"] { font-family: "Noto Sans JP", "Hiragino Sans", sans-serif; }
   body[data-lang="ko"] { font-family: "Noto Sans KR", "Malgun Gothic", sans-serif; }
@@ -57,7 +60,6 @@
     text-decoration: none;
     font-size: 0.85rem;
     transition: color 0.2s;
-    cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -73,7 +75,6 @@
     padding: 0.5rem 1rem;
     border-radius: 6px;
     border: none;
-    cursor: pointer;
     font-size: 0.85rem;
     transition: all 0.2s;
     font-family: inherit;
@@ -156,7 +157,6 @@
     border-color: var(--accent);
   }
   textarea.form-control { resize: vertical; min-height: 120px; }
-  select.form-control { cursor: pointer; }
 
   /* Region selector */
   .region-selectors { display: flex; gap: 0.75rem; }
@@ -169,7 +169,6 @@
     gap: 0.5rem;
     font-size: 0.85rem;
     color: var(--muted);
-    cursor: pointer;
   }
   .checkbox-label input { accent-color: var(--accent); }
 
@@ -197,7 +196,16 @@
     color: var(--ink);
     line-height: 1.7;
     margin-bottom: 0.5rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    cursor: pointer;
   }
+  .dream-text:hover { color: var(--accent); }
   .dream-keywords {
     display: flex;
     flex-wrap: wrap;
@@ -209,8 +217,12 @@
     padding: 0.2rem 0.6rem;
     border-radius: 12px;
     font-size: 0.75rem;
-    cursor: pointer;
     transition: background 0.2s;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: break-all;
   }
   .keyword-tag:hover { background: rgba(139,92,246,0.3); }
 
@@ -261,7 +273,6 @@
   .tab {
     padding: 0.5rem 1rem;
     border-radius: 6px;
-    cursor: pointer;
     font-size: 0.85rem;
     color: var(--muted);
     transition: all 0.2s;
@@ -296,7 +307,6 @@
     float: right;
     font-size: 1.5rem;
     color: var(--muted);
-    cursor: pointer;
     line-height: 1;
   }
   .modal-close:hover { color: var(--ink); }
@@ -313,6 +323,81 @@
 
   /* Chart containers */
   .chart-container { width: 100%; height: 400px; }
+
+  /* World Map */
+  .map-container {
+    position: relative;
+    width: 100%;
+    height: 500px;
+    background: var(--bg);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: move;
+  }
+  .map-container:active { cursor: grabbing; }
+  #dreamMap { display: block; width: 100%; height: 100%; }
+  .map-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .map-controls button {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0;
+    border-radius: 6px;
+  }
+  .map-tooltip {
+    position: absolute;
+    display: none;
+    background: var(--bg2);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    pointer-events: none;
+    z-index: 10;
+    max-width: 250px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    font-size: 0.85rem;
+  }
+  .map-tooltip.show { display: block; }
+  .map-tooltip-title {
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+  }
+  .map-tooltip-keywords {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .map-tooltip-keyword {
+    background: rgba(139,92,246,0.15);
+    color: var(--accent);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.75rem;
+  }
+  .map-legend {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .legend-gradient {
+    width: 120px;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #1e293b, #8b5cf6, #06b6d4);
+  }
 
   /* Notification */
   .toast {
@@ -367,7 +452,6 @@
     padding: 0.3rem 0.5rem;
     font-size: 0.8rem;
     max-width: 120px;
-    cursor: pointer;
   }
   #langSelector:focus { outline: none; border-color: var(--accent); }
 </style>
@@ -383,6 +467,7 @@
     <a data-section="upload" data-i18n="navUpload">记录梦境</a>
     <a data-section="explore" data-i18n="navExplore">探索梦境</a>
     <a data-section="analytics" data-i18n="navAnalytics">历史图表</a>
+    <a data-section="mydreams" data-i18n="navMyDreams">我的梦境</a>
     <select class="form-control" id="langSelector" style="max-width:120px;padding:0.3rem 0.5rem;font-size:0.8rem;">
       <option value="zh">中文</option>
       <option value="en">English</option>
@@ -450,6 +535,30 @@
         </div>
       </div>
       <div id="wordCloud"></div>
+    </div>
+
+    <div class="card fade-in">
+      <div class="card-header">
+        <div>
+          <div class="card-title" data-i18n="mapTitle">全球梦境地图</div>
+          <div class="card-subtitle" data-i18n="mapSubtitle">探索世界各地的梦境关键词分布</div>
+        </div>
+        <div class="map-controls">
+          <button class="btn btn-sm btn-secondary" id="mapZoomIn" title="放大">+</button>
+          <button class="btn btn-sm btn-secondary" id="mapZoomOut" title="缩小">-</button>
+          <button class="btn btn-sm btn-secondary" id="mapReset" title="重置" data-i18n="mapReset">重置</button>
+        </div>
+      </div>
+      <div class="map-container" id="mapContainer">
+        <canvas id="dreamMap"></canvas>
+        <div class="map-tooltip" id="mapTooltip"></div>
+      </div>
+      <div class="map-legend">
+        <span class="legend-label" data-i18n="mapLegend">梦境活跃度：</span>
+        <span class="legend-gradient"></span>
+        <span class="legend-low" data-i18n="low">低</span>
+        <span class="legend-high" data-i18n="high">高</span>
+      </div>
     </div>
 
     <div class="grid-2 fade-in">
@@ -543,6 +652,20 @@
           <option value="">所有省份</option>
         </select>
       </div>
+      <div class="region-selectors" style="max-width:600px;margin-bottom:1rem;gap:0.5rem;flex-wrap:wrap;">
+        <select class="form-control" id="searchDatePreset" style="max-width:180px;">
+          <option value="" data-i18n="allDates">所有时间</option>
+          <option value="today" data-i18n="today">今天</option>
+          <option value="yesterday" data-i18n="yesterday">昨天</option>
+          <option value="thisWeek" data-i18n="thisWeek">本周</option>
+          <option value="lastWeek" data-i18n="lastWeek">上周</option>
+          <option value="thisMonth" data-i18n="thisMonth">本月</option>
+          <option value="lastMonth" data-i18n="lastMonth">上月</option>
+          <option value="custom" data-i18n="custom">自定义</option>
+        </select>
+        <input type="date" class="form-control" id="searchDateFrom" style="max-width:160px;display:none;" placeholder="">
+        <input type="date" class="form-control" id="searchDateTo" style="max-width:160px;display:none;" placeholder="">
+      </div>
       <div id="searchResults"></div>
     </div>
   </section>
@@ -572,6 +695,19 @@
       <div id="timelineChart" class="chart-container" style="display:block;"></div>
       <div id="keywordTrendChart" class="chart-container" style="display:none;"></div>
       <div id="heatmapChart" class="chart-container" style="display:none;height:500px;"></div>
+    </div>
+  </section>
+
+  <!-- MY DREAMS SECTION -->
+  <section id="mydreams" class="section">
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title" data-i18n="myDreamsTitle">我的梦境</div>
+          <div class="card-subtitle" data-i18n="myDreamsSubtitle">查看和管理你提交的所有梦境</div>
+        </div>
+      </div>
+      <div id="myDreamsList"></div>
     </div>
   </section>
 
@@ -615,6 +751,43 @@
   </div>
 </div>
 
+<!-- Dream Detail Modal -->
+<div class="modal-overlay" id="dreamDetailModal">
+  <div class="modal" style="max-width:600px;max-height:80vh;display:flex;flex-direction:column;">
+    <span class="modal-close" onclick="closeModal('dreamDetailModal')">&times;</span>
+    <div class="modal-title" data-i18n="dreamDetailTitle">梦境详情</div>
+    <div id="dreamDetailMeta" style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;"></div>
+    <div id="dreamDetailContent" style="flex:1;overflow-y:auto;overflow-x:hidden;word-break:break-all;overflow-wrap:anywhere;white-space:pre-wrap;font-size:0.95rem;color:var(--ink);line-height:1.8;padding-right:0.5rem;"></div>
+    <div id="dreamDetailKeywords" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:1rem;"></div>
+  </div>
+</div>
+
+<!-- Edit Dream Modal -->
+<div class="modal-overlay" id="editDreamModal">
+  <div class="modal" style="max-width:560px;">
+    <span class="modal-close" onclick="closeModal('editDreamModal')">&times;</span>
+    <div class="modal-title" data-i18n="editDream">编辑梦境</div>
+    <textarea id="editDreamText" rows="8" style="width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--rule);border-radius:8px;padding:0.75rem;font-size:0.95rem;resize:vertical;font-family:inherit;"></textarea>
+    <div style="display:flex;gap:0.75rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="btn btn-secondary" onclick="closeModal('editDreamModal')" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="saveEditDream()" data-i18n="save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Delete Modal -->
+<div class="modal-overlay" id="confirmDeleteModal">
+  <div class="modal" style="max-width:400px;">
+    <span class="modal-close" onclick="closeModal('confirmDeleteModal')">&times;</span>
+    <div class="modal-title" style="color:#ef4444;" data-i18n="confirmDeleteTitle">确认删除</div>
+    <p style="color:var(--muted);margin-bottom:1.5rem;" data-i18n="confirmDelete">确定要删除这条梦境吗？</p>
+    <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeModal('confirmDeleteModal')" data-i18n="cancel">取消</button>
+      <button class="btn btn-danger" onclick="confirmDeleteDream()" style="background:#ef4444;color:#fff;" data-i18n="delete">删除</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -626,6 +799,7 @@
 
 <script src="./_shared/js/echarts.min.js"></script>
 <script src="./_shared/js/echarts-wordcloud.min.js"></script>
-<script src="assets/app.js"></script>
+<script src="assets/world-map.js?v=2"></script>
+<script src="assets/app.js?v=27"></script>
 </body>
 </html>
