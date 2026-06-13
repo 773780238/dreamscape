@@ -2175,6 +2175,12 @@
     selector.addEventListener('change', function() {
       currentLang = this.value;
       applyLanguage();
+      // Re-sync anonymous checkbox state after language change
+      var anonCheckbox = document.getElementById('isAnonymous');
+      var unameOption = document.getElementById('usernameOption');
+      if (anonCheckbox && unameOption) {
+        unameOption.style.display = anonCheckbox.checked ? 'none' : 'block';
+      }
       updateUserUI();
       renderHome();
     });
