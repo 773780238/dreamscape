@@ -450,6 +450,12 @@
       datePresetEl.value = dpVal;
     }
     localStorage.setItem('ds_lang', currentLang);
+    // Re-sync form UI states after language update
+    const _anonCb = document.getElementById('isAnonymous');
+    const _unameOpt = document.getElementById('usernameOption');
+    if (_anonCb && _unameOpt) {
+      _unameOpt.style.display = _anonCb.checked ? 'none' : 'block';
+    }
   }
 
   // ==================== Supabase 配置 ====================
