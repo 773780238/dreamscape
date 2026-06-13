@@ -88,33 +88,36 @@
 
   /* Main Layout */
   .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-  .section { display: none; }
+  .section { display: none; width: 100%; }
   .section.active { display: block; }
   /* Section background images */
+  #home.active, #upload.active, #explore.active, #analytics.active, #mydreams.active {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    min-height: 100vh;
+    padding: 2rem 0;
+  }
   #home.active {
-    background: linear-gradient(180deg, rgba(15,23,42,0.3) 0%, rgba(15,23,42,0.85) 50%, var(--bg) 100%),
-                url('assets/bg-home.png') center top / cover no-repeat;
-    min-height: 80vh;
+    background-image: linear-gradient(180deg, rgba(15,23,42,0.2) 0%, rgba(15,23,42,0.8) 50%, var(--bg) 100%),
+                url('assets/bg-home.png');
   }
   #upload.active {
-    background: linear-gradient(135deg, rgba(15,23,42,0.75) 0%, rgba(15,23,42,0.9) 100%),
-                url('assets/bg-upload.png') center / cover no-repeat;
-    min-height: 80vh;
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+                url('assets/bg-upload.png');
   }
   #explore.active {
-    background: linear-gradient(135deg, rgba(15,23,42,0.75) 0%, rgba(15,23,42,0.9) 100%),
-                url('assets/bg-explore.png') center / cover no-repeat;
-    min-height: 80vh;
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+                url('assets/bg-explore.png');
   }
   #analytics.active {
-    background: linear-gradient(135deg, rgba(15,23,42,0.75) 0%, rgba(15,23,42,0.9) 100%),
-                url('assets/bg-analytics.png') center / cover no-repeat;
-    min-height: 80vh;
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+                url('assets/bg-analytics.png');
   }
   #mydreams.active {
-    background: linear-gradient(135deg, rgba(15,23,42,0.75) 0%, rgba(15,23,42,0.9) 100%),
-                url('assets/bg-mydreams.png') center / cover no-repeat;
-    min-height: 80vh;
+    background-image: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(15,23,42,0.88) 100%),
+                url('assets/bg-mydreams.png');
   }
 
   /* Hero */
