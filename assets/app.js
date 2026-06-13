@@ -368,16 +368,118 @@
     localStorage.setItem('ds_lang', currentLang);
   }
 
+  // ==================== Supabase 配置 ====================
+  // 请在 https://supabase.com 创建项目后，填入以下信息
+  const SUPABASE_URL = 'YOUR_SUPABASE_URL';      // 例如: https://xxxxx.supabase.co
+  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // 在 Settings > API 中找到
+  const USE_SUPABASE = false; // 设为 true 启用远程数据库，false 使用本地 localStorage
+
+  let supabase = null;
+  if (USE_SUPABASE && SUPABASE_URL !== 'YOUR_SUPABASE_URL') {
+    try { supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch(e) { console.warn('Supabase init failed:', e); }
+  }
+
   // ==================== 数据存储 ====================
   const DB = {
     dreams: JSON.parse(localStorage.getItem('ds_dreams') || '[]'),
     users: JSON.parse(localStorage.getItem('ds_users') || '[]'),
     currentUser: JSON.parse(localStorage.getItem('ds_currentUser') || 'null'),
+
+    // 本地存储方法
     saveDreams() { localStorage.setItem('ds_dreams', JSON.stringify(this.dreams)); },
     saveUsers() { localStorage.setItem('ds_users', JSON.stringify(this.users)); },
     saveCurrentUser() { localStorage.setItem('ds_currentUser', JSON.stringify(this.currentUser)); },
-    addDream(dream) { this.dreams.unshift(dream); this.saveDreams(); },
-    addUser(user) { this.users.push(user); this.saveUsers(); }
+
+    // 加载所有梦境（优先从 Supabase，回退到 localStorage）
+    async loadDreams() {
+      if (supabase) {
+        try {
+          const { data, error } = await supabase.from('dreams').select('*').order('created_at', { ascending: false });
+          if (!error && data) {
+            this.dreams = data.map(d => ({
+              id: d.id,
+              text: d.text,
+              country: d.country,
+              province: d.province,
+              date: d.dream_date,
+              author: d.author,
+              userId: d.user_id,
+              keywords: typeof d.keywords === 'string' ? JSON.parse(d.keywords) : (d.keywords || []),
+              lang: d.lang || 'zh'
+            }));
+            this.saveDreams(); // 缓存到本地
+          }
+        } catch(e) { console.warn('Failed to load dreams from Supabase:', e); }
+      }
+      return this.dreams;
+    },
+
+    // 添加梦境
+    async addDream(dream) {
+      if (supabase) {
+        try {
+          const { data, error } = await supabase.from('dreams').insert({
+            text: dream.text,
+            country: dream.country,
+            province: dream.province,
+            dream_date: dream.date,
+            author: dream.author,
+            user_id: dream.userId,
+            keywords: JSON.stringify(dream.keywords),
+            lang: dream.lang || 'zh'
+          }).select().single();
+          if (!error && data) {
+            dream.id = data.id;
+          }
+        } catch(e) { console.warn('Failed to save dream to Supabase:', e); }
+      }
+      this.dreams.unshift(dream);
+      this.saveDreams();
+    },
+
+    // 用户注册
+    async addUser(user) {
+      if (supabase) {
+        try {
+          // 使用简单表存储用户，密码用 btoa 简单编码（非加密，仅避免明文）
+          const { data, error } = await supabase.from('users').insert({
+            username: user.username,
+            password: btoa(user.password) // base64 编码
+          }).select().single();
+          if (!error && data) {
+            user.id = data.id;
+          }
+        } catch(e) { console.warn('Failed to save user to Supabase:', e); }
+      }
+      this.users.push(user);
+      this.saveUsers();
+    },
+
+    // 用户登录
+    async login(username, password) {
+      if (supabase) {
+        try {
+          const { data, error } = await supabase.from('users').select('*').eq('username', username).single();
+          if (!error && data && atob(data.password) === password) {
+            return { id: data.id, username: data.username, password };
+          }
+          return null;
+        } catch(e) { console.warn('Supabase login failed:', e); }
+      }
+      // localStorage 回退
+      return this.users.find(u => u.username === username && u.password === password) || null;
+    },
+
+    // 检查用户名是否存在
+    async userExists(username) {
+      if (supabase) {
+        try {
+          const { data, error } = await supabase.from('users').select('id').eq('username', username).single();
+          return !error && !!data;
+        } catch(e) { return false; }
+      }
+      return this.users.some(u => u.username === username);
+    }
   };
 
   // ==================== 地区数据 ====================
@@ -809,7 +911,12 @@
   }
 
   // ==================== 初始化数据 ====================
-  function initDemoData() {
+  async function initDemoData() {
+    // 如果使用 Supabase，先从远程加载
+    if (supabase) {
+      await DB.loadDreams();
+      if (DB.dreams.length > 0) return; // 远程有数据则跳过 demo
+    }
     if (DB.dreams.length > 0) return;
     const demoDreams = [
       { id: Date.now()-100000, text: '我梦见自己在一座古老的城市中漫步，街道两旁是高大的梧桐树，树叶在风中沙沙作响。突然天空变成了紫色，一只巨大的凤凰从云层中飞出，它的羽毛闪烁着金色的光芒。我感到一种莫名的平静和力量。', country: '中国', province: '北京', date: '2026-06-10', author: '匿名', userId: null, keywords: [], lang: 'zh' },
@@ -825,8 +932,10 @@
     ];
     demoDreams.forEach(d => {
       d.keywords = extractKeywords(d.text);
-      DB.addDream(d);
     });
+    for (const d of demoDreams) {
+      await DB.addDream(d);
+    }
   }
 
   // ==================== UI 功能 ====================
@@ -1171,24 +1280,24 @@
     document.getElementById('registerBtn').addEventListener('click', () => openModal('registerModal'));
     document.getElementById('logoutBtn').addEventListener('click', logout);
 
-    document.getElementById('loginForm').addEventListener('submit', function(e) {
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       const username = document.getElementById('loginUsername').value.trim();
       const password = document.getElementById('loginPassword').value;
-      const user = DB.users.find(u => u.username === username && u.password === password);
+      const user = await DB.login(username, password);
       if (user) {
         DB.currentUser = user; DB.saveCurrentUser(); updateUserUI();
         closeModal('loginModal'); showToast(t('toastLoginSuccess'), 'success');
       } else { showToast(t('toastLoginFail'), 'error'); }
     });
 
-    document.getElementById('registerForm').addEventListener('submit', function(e) {
+    document.getElementById('registerForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       const username = document.getElementById('regUsername').value.trim();
       const password = document.getElementById('regPassword').value;
-      if (DB.users.find(u => u.username === username)) { showToast(t('toastRegisterFail'), 'error'); return; }
+      if (await DB.userExists(username)) { showToast(t('toastRegisterFail'), 'error'); return; }
       const user = { id: 'u_' + Date.now(), username, password };
-      DB.addUser(user); DB.currentUser = user; DB.saveCurrentUser(); updateUserUI();
+      await DB.addUser(user); DB.currentUser = user; DB.saveCurrentUser(); updateUserUI();
       closeModal('registerModal'); showToast(t('toastRegisterSuccess'), 'success');
     });
     updateUserUI();
@@ -1226,7 +1335,7 @@
     document.getElementById('isAnonymous').addEventListener('change', function() {
       document.getElementById('usernameOption').style.display = this.checked ? 'none' : 'block';
     });
-    form.addEventListener('submit', function(e) {
+    form.addEventListener('submit', async function(e) {
       e.preventDefault();
       const text = document.getElementById('dreamText').value.trim();
       const country = document.getElementById('dreamCountry').value;
@@ -1239,7 +1348,7 @@
       const lang = detectLanguage(text);
       const author = DB.currentUser && !isAnonymous ? (displayName || DB.currentUser.username) : t('anonymousAuthor');
       const dream = { id: Date.now(), text, country, province, date, author, userId: DB.currentUser ? DB.currentUser.id : null, keywords, lang };
-      DB.addDream(dream);
+      await DB.addDream(dream);
       showToast(t('toastDreamSuccess'), 'success');
       form.reset();
       document.getElementById('dreamProvince').disabled = true;
@@ -1286,8 +1395,8 @@
   });
 
   // ==================== 初始化 ====================
-  function init() {
-    initDemoData();
+  async function init() {
+    await initDemoData();
     applyLanguage();
     initRegionSelectors();
     initUserSystem();
