@@ -1258,6 +1258,16 @@
       this.countryKeywords = {};
       this.provinceKeywords = {};
       this.maxDreamCount = 1;
+      // Province bubble cycling animation state
+      this._provinceGroups = [];        // array of [{prov, pos, radius, keywords}]
+      this._provinceGroupIdx = 0;
+      this._provinceFadeStart = 0;       // timestamp when current group started
+      this._provinceCycleMs = 3000;      // display duration per province
+      this._provinceFadeMs = 600;        // fade in/out duration
+      this._provinceLastCountry = null;
+      this._provinceLastZoom = 0;
+      this._provinceAnimRunning = false;
+      this._provinceAnimRafId = null;
       this.colors = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6366f1','#14b8a6'];
       // Geo bounds: longitude -180~180, latitude -90~90
       this.geoW = 360;
@@ -1590,6 +1600,81 @@
       this.ctx.globalAlpha = 1;
     }
 
+    _getClusterRadius(keywordCount) {
+      // Must match drawKeywordCluster radius formula exactly
+      return Math.max(35, keywordCount * 10 + 15);
+    }
+
+    _bubblesOverlap(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      return dist < (a.r + b.r);
+    }
+
+    _computeProvinceGroups(closestCountry) {
+      const provinces = getProvinces(closestCountry);
+      const items = [];
+
+      for (const prov of provinces) {
+        const provData = this.provinceKeywords[closestCountry]?.[prov.name];
+        if (!provData || provData.length === 0) continue;
+        const pos = this.toScreen(prov.cx, prov.cy);
+        if (!this.isInViewport(pos.x, pos.y, 60)) continue;
+        const radius = this._getClusterRadius(provData.slice(0, 3).length);
+        items.push({ prov, pos, radius, keywords: provData.slice(0, 3) });
+      }
+
+      if (items.length === 0) return [];
+
+      // Greedy grouping: assign each item to first non-overlapping group
+      const groups = [];
+      for (const item of items) {
+        let placed = false;
+        for (let g = 0; g < groups.length; g++) {
+          let ok = true;
+          for (const existing of groups[g]) {
+            if (this._bubblesOverlap(
+              { x: item.pos.x, y: item.pos.y, r: item.radius },
+              { x: existing.pos.x, y: existing.pos.y, r: existing.radius }
+            )) { ok = false; break; }
+          }
+          if (ok) { groups[g].push(item); placed = true; break; }
+        }
+        if (!placed) groups.push([item]);
+      }
+      return groups;
+    }
+
+    _startProvinceAnim() {
+      if (this._provinceAnimRunning) return;
+      this._provinceAnimRunning = true;
+      const tick = (ts) => {
+        if (!this._provinceAnimRunning) return;
+        const elapsed = ts - this._provinceFadeStart;
+        const cycle = this._provinceCycleMs;
+        const fade = this._provinceFadeMs;
+
+        // Advance group when one full cycle completes
+        if (elapsed >= cycle && this._provinceGroups.length > 1) {
+          this._provinceGroupIdx = (this._provinceGroupIdx + 1) % this._provinceGroups.length;
+          this._provinceFadeStart = ts;
+        }
+        this.render();
+        this._provinceAnimRafId = requestAnimationFrame(tick);
+      };
+      this._provinceFadeStart = performance.now();
+      this._provinceAnimRafId = requestAnimationFrame(tick);
+    }
+
+    _stopProvinceAnim() {
+      this._provinceAnimRunning = false;
+      if (this._provinceAnimRafId !== null) {
+        cancelAnimationFrame(this._provinceAnimRafId);
+        this._provinceAnimRafId = null;
+      }
+    }
+
     drawProvinceLabels(alpha) {
       if (alpha <= 0) return;
       this.ctx.globalAlpha = alpha;
@@ -1609,16 +1694,77 @@
         }
       }
       if (!closestCountry) {
+        this._stopProvinceAnim();
         this.ctx.globalAlpha = 1;
         return;
       }
-      const provinces = getProvinces(closestCountry);
-      for (const prov of provinces) {
-        const provData = this.provinceKeywords[closestCountry]?.[prov.name];
-        if (!provData || provData.length === 0) continue;
-        const pos = this.toScreen(prov.cx, prov.cy);
-        if (!this.isInViewport(pos.x, pos.y, 60)) continue;
-        this.drawKeywordCluster(pos.x, pos.y, provData.slice(0, 3), tr(prov.name), 11);
+
+      const zoomThreshold = 2.5 - 0.4; // ~2.1 — when province labels dominate
+      const showProvinces = this.zoom > zoomThreshold;
+
+      if (showProvinces) {
+        // Recompute groups only when country or zoom changes significantly
+        if (closestCountry !== this._provinceLastCountry || Math.abs(this.zoom - this._provinceLastZoom) > 0.2) {
+          this._provinceGroups = this._computeProvinceGroups(closestCountry);
+          this._provinceGroupIdx = 0;
+          this._provinceFadeStart = performance.now();
+          this._provinceLastCountry = closestCountry;
+          this._provinceLastZoom = this.zoom;
+        }
+
+        if (this._provinceGroups.length > 1) {
+          // Animated cycling — start RAF loop
+          this._startProvinceAnim();
+          const elapsed = performance.now() - this._provinceFadeStart;
+          const cycle = this._provinceCycleMs;
+          const fade = this._provinceFadeMs;
+
+          // Current and next group indices
+          const curIdx = this._provinceGroupIdx;
+          const nextIdx = (curIdx + 1) % this._provinceGroups.length;
+
+          // Current group: fade in → hold → fade out
+          const t = elapsed % cycle;
+          let curAlpha = 1;
+          if (t < fade) curAlpha = t / fade;               // fade in
+          else if (t > cycle - fade) curAlpha = (cycle - t) / fade; // fade out
+
+          // Next group: inverse fade (visible when current is fading)
+          let nextAlpha = 0;
+          if (t > cycle - fade) nextAlpha = (t - (cycle - fade)) / fade;
+
+          // Draw current group
+          if (curAlpha > 0) {
+            this.ctx.globalAlpha = alpha * curAlpha;
+            for (const item of this._provinceGroups[curIdx]) {
+              this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
+            }
+          }
+          // Draw next group (overlapping fade)
+          if (nextAlpha > 0) {
+            this.ctx.globalAlpha = alpha * nextAlpha;
+            for (const item of this._provinceGroups[nextIdx]) {
+              this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
+            }
+          }
+        } else {
+          // Only one group — no cycling needed
+          this._stopProvinceAnim();
+          for (const item of this._provinceGroups[0]) {
+            this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
+          }
+        }
+      } else {
+        // Country-level: show all province bubbles simultaneously (no cycling)
+        this._stopProvinceAnim();
+        const provinces = getProvinces(closestCountry);
+        for (const prov of provinces) {
+          const provData = this.provinceKeywords[closestCountry]?.[prov.name];
+          if (!provData || provData.length === 0) continue;
+          const pos = this.toScreen(prov.cx, prov.cy);
+          if (!this.isInViewport(pos.x, pos.y, 60)) continue;
+          this.drawKeywordCluster(pos.x, pos.y, provData.slice(0, 3), tr(prov.name), 11);
+        }
       }
       this.ctx.globalAlpha = 1;
     }
