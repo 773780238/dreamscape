@@ -1258,20 +1258,20 @@
       this.countryKeywords = {};
       this.provinceKeywords = {};
       this.maxDreamCount = 1;
-      // Province bubble cycling animation state
-      this._provinceGroups = [];        // array of [{prov, pos, radius, keywords}]
-      this._provinceGroupIdx = 0;
-      this._provinceFadeStart = 0;       // timestamp when current group started
-      this._provinceCycleMs = 3000;      // display duration per province
-      this._provinceFadeMs = 600;        // fade in/out duration
-      this._provinceLastCountry = null;
-      this._provinceLastZoom = 0;
-      this._provinceAnimRunning = false;
-      this._provinceAnimRafId = null;
       this.colors = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6366f1','#14b8a6'];
       // Geo bounds: longitude -180~180, latitude -90~90
       this.geoW = 360;
       this.geoH = 180;
+      // Province cloud cycle animation state
+      this._provinceCycleGroups = [];   // array of index arrays, each group overlaps
+      this._provinceClusterData = [];    // {x, y, keywords, title, radius, provName}[] all visible clusters
+      this._provinceCycleIdx = 0;        // current group index
+      this._provinceCycleFade = 0;      // 0~1 fade alpha
+      this._provinceCyclePhase = 'in';    // 'in' | 'hold' | 'out'
+      this._provinceCycleTimer = null;   // timestamp of phase start
+      this._provinceCycleRaf = null;    // requestAnimationFrame id
+      this._lastProvinceCycleKey = '';   // key to detect zoom/pan changes
+      this._provinceCycleDirty = false;  // true when cycle needs restart
       this.setupCanvas();
       this.aggregateKeywords();
       this.initEvents();
@@ -1406,7 +1406,7 @@
     }
 
     getCountryColor(countryName, dreamCount) {
-      if (dreamCount === 0) return '#111827';
+      if (dreamCount === 0) return '#1e293b';
       const ratio = Math.min(dreamCount / this.maxDreamCount, 1);
       // Interpolate from #1e293b to #8b5cf6
       const r = Math.round(30 + (139 - 30) * ratio);
@@ -1547,16 +1547,20 @@
       this.ctx.clearRect(0, 0, this.width, this.height);
       this._buildHitPaths(); // Rebuild hit-test cache on every render
       // Draw ocean background
-      this.ctx.fillStyle = '#0a0f1e';
+      this.ctx.fillStyle = '#0f172a';
       this.ctx.fillRect(0, 0, this.width, this.height);
 
-      // Draw countries: first pass fill only (no strokes by default)
+      // Draw countries: first pass fill, second pass normal stroke, then hover stroke on top
       for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
         const count = this.getDreamCount(name);
         const fill = this.getCountryColor(name, count);
         this.drawCountryPathFill(data.path, fill);
       }
-      // Only draw border when mouse is inside a country's border — border lights up on hover
+      for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
+        if (name === this.hoverCountry) continue; // skip hover country, draw last
+        this.drawCountryPathStroke(data.path, '#334155');
+      }
+      // Draw hovered country's border last so it's always on top
       if (this.hoverCountry && WORLD_MAP_PATHS[this.hoverCountry]) {
         this.drawCountryPathStroke(WORLD_MAP_PATHS[this.hoverCountry].path, '#06b6d4');
       }
@@ -1569,12 +1573,19 @@
 
       if (this.zoom < tStart) {
         this.drawCountryLabels(1);
+        this._stopProvinceCycle(); // clean up animation
       } else if (this.zoom > tEnd) {
-        this.drawProvinceLabels(1);
+        // Province mode: precompute cluster data, detect overlaps, start animation
+        const cycleKey = Math.round(this.zoom * 100) + '_' + Math.round(this.panX) + '_' + Math.round(this.panY);
+        if (cycleKey !== this._lastProvinceCycleKey) {
+          this._lastProvinceCycleKey = cycleKey;
+          this._provinceCycleDirty = true;
+        }
+        this._animateProvinceClouds();
       } else {
-        const t = (this.zoom - tStart) / transitionRange;
-        this.drawCountryLabels(1 - t);
-        this.drawProvinceLabels(t);
+        this.drawCountryLabels(1 - (this.zoom - tStart) / transitionRange);
+        this.drawProvinceLabels((this.zoom - tStart) / transitionRange);
+        this._stopProvinceCycle();
       }
     }
 
@@ -1600,81 +1611,6 @@
       this.ctx.globalAlpha = 1;
     }
 
-    _getClusterRadius(keywordCount) {
-      // Must match drawKeywordCluster radius formula exactly
-      return Math.max(35, keywordCount * 10 + 15);
-    }
-
-    _bubblesOverlap(a, b) {
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      return dist < (a.r + b.r);
-    }
-
-    _computeProvinceGroups(closestCountry) {
-      const provinces = getProvinces(closestCountry);
-      const items = [];
-
-      for (const prov of provinces) {
-        const provData = this.provinceKeywords[closestCountry]?.[prov.name];
-        if (!provData || provData.length === 0) continue;
-        const pos = this.toScreen(prov.cx, prov.cy);
-        if (!this.isInViewport(pos.x, pos.y, 60)) continue;
-        const radius = this._getClusterRadius(provData.slice(0, 3).length);
-        items.push({ prov, pos, radius, keywords: provData.slice(0, 3) });
-      }
-
-      if (items.length === 0) return [];
-
-      // Greedy grouping: assign each item to first non-overlapping group
-      const groups = [];
-      for (const item of items) {
-        let placed = false;
-        for (let g = 0; g < groups.length; g++) {
-          let ok = true;
-          for (const existing of groups[g]) {
-            if (this._bubblesOverlap(
-              { x: item.pos.x, y: item.pos.y, r: item.radius },
-              { x: existing.pos.x, y: existing.pos.y, r: existing.radius }
-            )) { ok = false; break; }
-          }
-          if (ok) { groups[g].push(item); placed = true; break; }
-        }
-        if (!placed) groups.push([item]);
-      }
-      return groups;
-    }
-
-    _startProvinceAnim() {
-      if (this._provinceAnimRunning) return;
-      this._provinceAnimRunning = true;
-      const tick = (ts) => {
-        if (!this._provinceAnimRunning) return;
-        const elapsed = ts - this._provinceFadeStart;
-        const cycle = this._provinceCycleMs;
-        const fade = this._provinceFadeMs;
-
-        // Advance group when one full cycle completes
-        if (elapsed >= cycle && this._provinceGroups.length > 1) {
-          this._provinceGroupIdx = (this._provinceGroupIdx + 1) % this._provinceGroups.length;
-          this._provinceFadeStart = ts;
-        }
-        this.render();
-        this._provinceAnimRafId = requestAnimationFrame(tick);
-      };
-      this._provinceFadeStart = performance.now();
-      this._provinceAnimRafId = requestAnimationFrame(tick);
-    }
-
-    _stopProvinceAnim() {
-      this._provinceAnimRunning = false;
-      if (this._provinceAnimRafId !== null) {
-        cancelAnimationFrame(this._provinceAnimRafId);
-        this._provinceAnimRafId = null;
-      }
-    }
-
     drawProvinceLabels(alpha) {
       if (alpha <= 0) return;
       this.ctx.globalAlpha = alpha;
@@ -1694,76 +1630,40 @@
         }
       }
       if (!closestCountry) {
-        this._stopProvinceAnim();
         this.ctx.globalAlpha = 1;
         return;
       }
+      const provinces = getProvinces(closestCountry);
+      const clusterData = [];
+      for (const prov of provinces) {
+        const provData = this.provinceKeywords[closestCountry]?.[prov.name];
+        if (!provData || provData.length === 0) continue;
+        const pos = this.toScreen(prov.cx, prov.cy);
+        if (!this.isInViewport(pos.x, pos.y, 60)) continue;
+        const kwCount = Math.min(provData.length, 3);
+        const radius = Math.max(35, kwCount * 10 + 15);
+        clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius, provName: prov.name });
+      }
+      // Store for animation
+      this._provinceClusterData = clusterData;
+      // Compute overlap groups
+      this._provinceCycleGroups = this._computeOverlapGroups(clusterData);
 
-      const zoomThreshold = 2.5 - 0.4; // ~2.1 — when province labels dominate
-      const showProvinces = this.zoom > zoomThreshold;
-
-      if (showProvinces) {
-        // Recompute groups only when country or zoom changes significantly
-        if (closestCountry !== this._provinceLastCountry || Math.abs(this.zoom - this._provinceLastZoom) > 0.2) {
-          this._provinceGroups = this._computeProvinceGroups(closestCountry);
-          this._provinceGroupIdx = 0;
-          this._provinceFadeStart = performance.now();
-          this._provinceLastCountry = closestCountry;
-          this._provinceLastZoom = this.zoom;
+      // Draw based on cycle state
+      if (this._provinceCycleGroups.length > 0) {
+        // Find the group that contains the current index
+        const group = this._provinceCycleGroups[this._provinceCycleIdx] || [];
+        const fadeAlpha = this._provinceCycleFade * alpha;
+        this.ctx.globalAlpha = fadeAlpha;
+        for (const idx of group) {
+          const c = clusterData[idx];
+          if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, fadeAlpha);
         }
-
-        if (this._provinceGroups.length > 1) {
-          // Animated cycling — start RAF loop
-          this._startProvinceAnim();
-          const elapsed = performance.now() - this._provinceFadeStart;
-          const cycle = this._provinceCycleMs;
-          const fade = this._provinceFadeMs;
-
-          // Current and next group indices
-          const curIdx = this._provinceGroupIdx;
-          const nextIdx = (curIdx + 1) % this._provinceGroups.length;
-
-          // Current group: fade in → hold → fade out
-          const t = elapsed % cycle;
-          let curAlpha = 1;
-          if (t < fade) curAlpha = t / fade;               // fade in
-          else if (t > cycle - fade) curAlpha = (cycle - t) / fade; // fade out
-
-          // Next group: inverse fade (visible when current is fading)
-          let nextAlpha = 0;
-          if (t > cycle - fade) nextAlpha = (t - (cycle - fade)) / fade;
-
-          // Draw current group
-          if (curAlpha > 0) {
-            this.ctx.globalAlpha = alpha * curAlpha;
-            for (const item of this._provinceGroups[curIdx]) {
-              this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
-            }
-          }
-          // Draw next group (overlapping fade)
-          if (nextAlpha > 0) {
-            this.ctx.globalAlpha = alpha * nextAlpha;
-            for (const item of this._provinceGroups[nextIdx]) {
-              this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
-            }
-          }
-        } else {
-          // Only one group — no cycling needed
-          this._stopProvinceAnim();
-          for (const item of this._provinceGroups[0]) {
-            this.drawKeywordCluster(item.pos.x, item.pos.y, item.keywords, tr(item.prov.name), 11);
-          }
-        }
+        this.ctx.globalAlpha = 1;
       } else {
-        // Country-level: show all province bubbles simultaneously (no cycling)
-        this._stopProvinceAnim();
-        const provinces = getProvinces(closestCountry);
-        for (const prov of provinces) {
-          const provData = this.provinceKeywords[closestCountry]?.[prov.name];
-          if (!provData || provData.length === 0) continue;
-          const pos = this.toScreen(prov.cx, prov.cy);
-          if (!this.isInViewport(pos.x, pos.y, 60)) continue;
-          this.drawKeywordCluster(pos.x, pos.y, provData.slice(0, 3), tr(prov.name), 11);
+        // No overlaps — draw all clusters at full alpha
+        for (const c of clusterData) {
+          this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, alpha);
         }
       }
       this.ctx.globalAlpha = 1;
@@ -1791,6 +1691,144 @@
         this.ctx.font = (i === 0 ? 'bold ' : '') + fs + 'px sans-serif';
         this.ctx.fillText(kw.name, x, offsetY + 5);
       });
+    }
+
+    // Draw a single province cluster with given base alpha (0~1)
+    _drawProvinceCluster(x, y, keywords, title, radius, baseAlpha) {
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      // Background circle
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+      this.ctx.fillStyle = `rgba(15, 23, 42, ${Math.min(baseAlpha * 0.95, 0.95)})`;
+      this.ctx.fill();
+      // Title
+      this.ctx.fillStyle = `rgba(241, 245, 249, ${baseAlpha})`;
+      this.ctx.font = 'bold 10px sans-serif';
+      this.ctx.fillText(title, x, y - radius + 14);
+      // Keywords
+      keywords.forEach((kw, i) => {
+        const fs = Math.max(9, 12 - i * 2);
+        const color = this.colors[i % this.colors.length];
+        const offsetY = y + (i - keywords.length / 2 + 0.5) * (fs + 3);
+        this.ctx.fillStyle = color; // alpha handled by ctx.globalAlpha
+        this.ctx.font = (i === 0 ? 'bold ' : '') + fs + 'px sans-serif';
+        this.ctx.fillText(kw.name, x, offsetY + 5);
+      });
+    }
+
+    // Compute groups of overlapping clusters (greedy algorithm)
+    _computeOverlapGroups(clusters) {
+      if (!clusters || clusters.length === 0) return [];
+      const n = clusters.length;
+      // Build adjacency: which pairs overlap
+      const adj = Array.from({ length: n }, () => []);
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const dx = clusters[i].x - clusters[j].x;
+          const dy = clusters[i].y - clusters[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const rSum = clusters[i].radius + clusters[j].radius;
+          if (dist < rSum * 1.1) { // 10% tolerance
+            adj[i].push(j);
+            adj[j].push(i);
+          }
+        }
+      }
+      // If no overlaps, return empty (draw all at once)
+      const hasOverlap = adj.some(list => list.length > 0);
+      if (!hasOverlap) return [];
+
+      // Greedy: group overlapping clusters together
+      const groups = [];
+      const used = new Array(n).fill(false);
+      for (let i = 0; i < n; i++) {
+        if (used[i]) continue;
+        const group = [i];
+        used[i] = true;
+        const queue = [i];
+        while (queue.length > 0) {
+          const cur = queue.shift();
+          for (const nb of adj[cur]) {
+            if (!used[nb]) {
+              used[nb] = true;
+              group.push(nb);
+              queue.push(nb);
+            }
+          }
+        }
+        groups.push(group);
+      }
+      return groups;
+    }
+
+    _stopProvinceCycle() {
+      if (this._provinceCycleRaf !== null) {
+        cancelAnimationFrame(this._provinceCycleRaf);
+        this._provinceCycleRaf = null;
+      }
+      this._provinceCycleGroups = [];
+      this._provinceCycleFade = 0;
+      this._provinceCyclePhase = 'in';
+      this._provinceCycleIdx = 0;
+    }
+
+    _animateProvinceClouds() {
+      const groups = this._provinceCycleGroups;
+      if (!groups || groups.length === 0) return;
+
+      // Start/restart cycle if dirty
+      if (this._provinceCycleDirty) {
+        this._provinceCycleDirty = false;
+        this._provinceCycleIdx = 0;
+        this._provinceCycleFade = 0;
+        this._provinceCyclePhase = 'in';
+        this._provinceCycleTimer = null;
+      }
+
+      // Phase durations (ms)
+      const FADE_IN_MS = 500;
+      const HOLD_MS = 2500;
+      const FADE_OUT_MS = 500;
+      const CYCLE_MS = FADE_IN_MS + HOLD_MS + FADE_OUT_MS; // 3.5s total per province
+
+      if (this._provinceCycleRaf === null) {
+        const tick = (now) => {
+          if (!this._provinceCycleGroups.length) {
+            this._provinceCycleRaf = null;
+            return;
+          }
+          const elapsed = this._provinceCycleTimer !== null ? now - this._provinceCycleTimer : 0;
+          const cyclePos = elapsed % CYCLE_MS;
+
+          let prevPhase = this._provinceCyclePhase;
+          let newFade = 0;
+
+          if (cyclePos < FADE_IN_MS) {
+            this._provinceCyclePhase = 'in';
+            newFade = cyclePos / FADE_IN_MS;
+          } else if (cyclePos < FADE_IN_MS + HOLD_MS) {
+            this._provinceCyclePhase = 'hold';
+            newFade = 1;
+          } else {
+            this._provinceCyclePhase = 'out';
+            newFade = 1 - (cyclePos - FADE_IN_MS - HOLD_MS) / FADE_OUT_MS;
+          }
+
+          this._provinceCycleFade = Math.max(0, Math.min(1, newFade));
+
+          // Advance to next group on each new cycle
+          if (cyclePos < CYCLE_MS - 16 && elapsed > CYCLE_MS - 16) {
+            this._provinceCycleIdx = (this._provinceCycleIdx + 1) % this._provinceCycleGroups.length;
+            this._provinceCycleTimer = now; // reset timer for next group
+          }
+
+          this._provinceCycleRaf = requestAnimationFrame(tick);
+          this.render(); // re-draw with new fade alpha
+        };
+        this._provinceCycleTimer = performance.now();
+        this._provinceCycleRaf = requestAnimationFrame(tick);
+      }
     }
 
     handleHover(e) {
