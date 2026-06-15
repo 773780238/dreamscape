@@ -1396,7 +1396,7 @@
     }
 
     getCountryColor(countryName, dreamCount) {
-      if (dreamCount === 0) return '#1e293b';
+      if (dreamCount === 0) return '#111827';
       const ratio = Math.min(dreamCount / this.maxDreamCount, 1);
       // Interpolate from #1e293b to #8b5cf6
       const r = Math.round(30 + (139 - 30) * ratio);
@@ -1537,20 +1537,16 @@
       this.ctx.clearRect(0, 0, this.width, this.height);
       this._buildHitPaths(); // Rebuild hit-test cache on every render
       // Draw ocean background
-      this.ctx.fillStyle = '#0f172a';
+      this.ctx.fillStyle = '#0a0f1e';
       this.ctx.fillRect(0, 0, this.width, this.height);
 
-      // Draw countries: first pass fill, second pass normal stroke, then hover stroke on top
+      // Draw countries: first pass fill only (no strokes by default)
       for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
         const count = this.getDreamCount(name);
         const fill = this.getCountryColor(name, count);
         this.drawCountryPathFill(data.path, fill);
       }
-      for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
-        if (name === this.hoverCountry) continue; // skip hover country, draw last
-        this.drawCountryPathStroke(data.path, '#334155');
-      }
-      // Draw hovered country's border last so it's always on top
+      // Only draw border when mouse is inside a country's border — border lights up on hover
       if (this.hoverCountry && WORLD_MAP_PATHS[this.hoverCountry]) {
         this.drawCountryPathStroke(WORLD_MAP_PATHS[this.hoverCountry].path, '#06b6d4');
       }
