@@ -1583,7 +1583,13 @@
           this._provinceCycleDirty = true;
           this._collectProvinceClusterData(); // populate groups before animation starts
         }
-        this._animateProvinceClouds(); // starts RAF if not running; RAF calls render() each tick
+        if (this._provinceCycleGroups.length > 0) {
+          // Has overlapping clusters → start fade-cycle animation
+          this._animateProvinceClouds();
+        } else {
+          // No overlaps → nonOverlapping drawn via drawProvinceLabels(1)
+          this._drawProvinceClusterLayer(1);
+        }
       } else {
         this.drawCountryLabels(1 - (this.zoom - tStart) / transitionRange);
         this.drawProvinceLabels((this.zoom - tStart) / transitionRange);
@@ -1628,6 +1634,7 @@
       if (!closestCountry) {
         this._provinceClusterData = [];
         this._provinceCycleGroups = [];
+        this._provinceNonOverlapping = [];
         return;
       }
       const provinces = getProvinces(closestCountry);
@@ -1642,26 +1649,32 @@
         clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius });
       }
       this._provinceClusterData = clusterData;
-      this._provinceCycleGroups = this._computeOverlapGroups(clusterData);
+      const result = this._computeOverlapGroups(clusterData);
+      this._provinceCycleGroups = result.groups;         // alternating groups
+      this._provinceNonOverlapping = result.nonOverlapping; // always visible
     }
 
-    // Draw province clusters based on current animation state
-    _drawProvinceClusterLayer(alpha) {
+    // Draw province clusters: nonOverlapping always at full alpha, cycling groups at groupAlpha
+    _drawProvinceClusterLayer(groupAlpha) {
       const clusterData = this._provinceClusterData;
       const groups = this._provinceCycleGroups;
+      const nonOvlp = this._provinceNonOverlapping || [];
       if (!clusterData || clusterData.length === 0) return;
-      this.ctx.globalAlpha = alpha;
+
+      // Non-overlapping clusters: always drawn at full alpha
+      this.ctx.globalAlpha = 1;
+      for (const idx of nonOvlp) {
+        const c = clusterData[idx];
+        if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, 1);
+      }
+
+      // Cycling groups: drawn with current fade alpha
       if (groups.length > 0) {
-        // Cycling mode: draw only the current group's clusters
+        this.ctx.globalAlpha = groupAlpha;
         const group = groups[this._provinceCycleIdx] || [];
         for (const idx of group) {
           const c = clusterData[idx];
-          if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, alpha);
-        }
-      } else {
-        // No overlaps — draw all at full alpha
-        for (const c of clusterData) {
-          this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, alpha);
+          if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, groupAlpha);
         }
       }
       this.ctx.globalAlpha = 1;
@@ -1670,7 +1683,7 @@
     drawProvinceLabels(alpha) {
       if (alpha <= 0) return;
       this._collectProvinceClusterData();
-      this._drawProvinceClusterLayer(alpha);
+      this._drawProvinceClusterLayer(alpha); // pass zoom-transition alpha for cycling groups
     }
 
     drawKeywordCluster(x, y, keywords, title, fontSize) {
@@ -1721,49 +1734,52 @@
       });
     }
 
-    // Compute groups of overlapping clusters (greedy algorithm)
+    // Compute groups of overlapping clusters.
+    // Returns { groups, nonOverlapping }:
+    //   - nonOverlapping: indices of circles that don't overlap anyone → always visible
+    //   - groups: alternating groups of mutually-overlapping circles
     _computeOverlapGroups(clusters) {
-      if (!clusters || clusters.length === 0) return [];
+      if (!clusters || clusters.length === 0) return { groups: [], nonOverlapping: [] };
       const n = clusters.length;
-      // Build adjacency: which pairs overlap
       const adj = Array.from({ length: n }, () => []);
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
           const dx = clusters[i].x - clusters[j].x;
           const dy = clusters[i].y - clusters[j].y;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          const rSum = clusters[i].radius + clusters[j].radius;
-          if (dist < rSum * 1.1) { // 10% tolerance
+          if (dist < (clusters[i].radius + clusters[j].radius) * 1.1) {
             adj[i].push(j);
             adj[j].push(i);
           }
         }
       }
-      // If no overlaps, return empty (draw all at once)
-      const hasOverlap = adj.some(list => list.length > 0);
-      if (!hasOverlap) return [];
-
-      // Greedy: group overlapping clusters together
-      const groups = [];
-      const used = new Array(n).fill(false);
+      const nonOverlapping = [];
+      const overlappingIdxs = new Set();
       for (let i = 0; i < n; i++) {
-        if (used[i]) continue;
-        const group = [i];
-        used[i] = true;
-        const queue = [i];
+        if (adj[i].length === 0) nonOverlapping.push(i);
+        else overlappingIdxs.add(i);
+      }
+      // If no overlaps at all, all clusters are nonOverlapping → no animation needed
+      if (overlappingIdxs.size === 0) return { groups: [], nonOverlapping };
+
+      // Build connected components from overlapping circles
+      const groups = [];
+      const used = new Set();
+      for (const start of overlappingIdxs) {
+        if (used.has(start)) continue;
+        const group = [];
+        const queue = [start];
+        used.add(start);
         while (queue.length > 0) {
           const cur = queue.shift();
+          group.push(cur);
           for (const nb of adj[cur]) {
-            if (!used[nb]) {
-              used[nb] = true;
-              group.push(nb);
-              queue.push(nb);
-            }
+            if (!used.has(nb)) { used.add(nb); queue.push(nb); }
           }
         }
         groups.push(group);
       }
-      return groups;
+      return { groups, nonOverlapping };
     }
 
     _stopProvinceCycle() {
@@ -1772,6 +1788,7 @@
         this._provinceCycleRaf = null;
       }
       this._provinceCycleGroups = [];
+      this._provinceNonOverlapping = [];
       this._provinceCycleFade = 0;
       this._provinceCyclePhase = 'in';
       this._provinceCycleIdx = 0;
@@ -1779,8 +1796,8 @@
     }
 
     _animateProvinceClouds() {
-      const groups = this._provinceCycleGroups;
-      if (!groups || groups.length === 0) return;
+      // Guard: only animate if there are overlapping clusters to cycle
+      if (!this._provinceCycleGroups || this._provinceCycleGroups.length === 0) return;
 
       // Start/restart cycle if dirty (zoom/pan changed)
       if (this._provinceCycleDirty) {
