@@ -1583,13 +1583,10 @@
           this._provinceCycleDirty = true;
           this._collectProvinceClusterData(); // populate groups before animation starts
         }
-        if (this._provinceCycleGroups.length > 0) {
-          // Has overlapping clusters → start fade-cycle animation
-          this._animateProvinceClouds();
-        } else {
-          // No overlaps → nonOverlapping drawn via drawProvinceLabels(1)
-          this._drawProvinceClusterLayer(1);
-        }
+        // Always redraw base map + nonOverlapping clusters first
+        this._redrawMapWithProvinceFade(0); // fade=0 → nonOverlapping at full alpha, cycling groups hidden
+        // Then start RAF for cycling animation (will override cycling groups)
+        this._animateProvinceClouds();
       } else {
         this.drawCountryLabels(1 - (this.zoom - tStart) / transitionRange);
         this.drawProvinceLabels((this.zoom - tStart) / transitionRange);
@@ -1632,6 +1629,14 @@
         if (dist < closestDist) { closestDist = dist; closestCountry = name; }
       }
       if (!closestCountry) {
+        // Fallback: pick the country with the most keyword data
+        let maxCount = 0;
+        for (const c in this.provinceKeywords) {
+          const cnt = Object.keys(this.provinceKeywords[c]).length;
+          if (cnt > maxCount && REGION_DATA[c] && PROVINCE_CENTERS[c]) { maxCount = cnt; closestCountry = c; }
+        }
+      }
+      if (!closestCountry) {
         this._provinceClusterData = [];
         this._provinceCycleGroups = [];
         this._provinceNonOverlapping = [];
@@ -1643,7 +1648,6 @@
         const provData = this.provinceKeywords[closestCountry]?.[prov.name];
         if (!provData || provData.length === 0) continue;
         const pos = this.toScreen(prov.cx, prov.cy);
-        if (!this.isInViewport(pos.x, pos.y, 60)) continue;
         const kwCount = Math.min(provData.length, 3);
         const radius = Math.max(35, kwCount * 10 + 15);
         clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius });
@@ -1847,28 +1851,24 @@
           }
 
           // Redraw map with new fade alpha (direct canvas redraw, not render() to avoid recursion)
-          this._redrawMapWithProvinceFade();
+          this._redrawMapWithProvinceFade(this._provinceCycleFade);
           this._provinceCycleRaf = requestAnimationFrame(tick);
         };
         this._provinceCycleRaf = requestAnimationFrame(tick);
       }
     }
 
-    // Redraw just the province clouds on top of the existing map canvas
-    _redrawMapWithProvinceFade() {
-      if (!this._provinceClusterData || this._provinceClusterData.length === 0) return;
-      // Clear only the keyword label area (re-render map + clouds)
+    // Redraw base map + province clouds with given cycling-group alpha (0=hidden)
+    _redrawMapWithProvinceFade(groupAlpha) {
+      // Always draw base map first (even if cluster data not ready yet)
       this._buildHitPaths();
-      // Draw ocean
       this.ctx.fillStyle = '#0f172a';
       this.ctx.fillRect(0, 0, this.width, this.height);
-      // Draw country fills
       for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
         const count = this.getDreamCount(name);
         const fill = this.getCountryColor(name, count);
         this.drawCountryPathFill(data.path, fill);
       }
-      // Draw country strokes
       for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
         if (name === this.hoverCountry) continue;
         this.drawCountryPathStroke(data.path, '#334155');
@@ -1876,8 +1876,11 @@
       if (this.hoverCountry && WORLD_MAP_PATHS[this.hoverCountry]) {
         this.drawCountryPathStroke(WORLD_MAP_PATHS[this.hoverCountry].path, '#06b6d4');
       }
-      // Draw province clusters with current fade
-      this._drawProvinceClusterLayer(this._provinceCycleFade);
+      // Draw nonOverlapping (always full alpha) + cycling groups (groupAlpha)
+      // Only draw clusters if data has been collected
+      if (this._provinceClusterData && this._provinceClusterData.length > 0) {
+        this._drawProvinceClusterLayer(groupAlpha);
+      }
     }
 
     handleHover(e) {
