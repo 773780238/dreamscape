@@ -1068,7 +1068,8 @@
         } else {
           provEl.disabled = idx === 0;
         }
-        if (id === 'cloudCountry') renderWordCloud();
+        if (id === 'cloudCountry') { renderWordCloud(); const dm = window.getDreamMap(); if (dm) dm.panToCountry(this.value); }
+        if (id === 'dreamCountry') { const dm = window.getDreamMap(); if (dm) dm.panToCountry(this.value); }
         if (id === 'searchCountry') renderSearchResults();
         if (id === 'analyticsCountry') renderAnalytics();
       });
@@ -1566,9 +1567,9 @@
         this.drawCountryPathStroke(WORLD_MAP_PATHS[this.hoverCountry].path, '#06b6d4');
       }
 
-      // Draw keywords based on zoom level
-      const threshold = 2.5;
-      const transitionRange = 0.8;
+      // Province mode: zoom > 2.2 gives ~55° viewport at zoom=2.5, showing most/all China provinces
+      const threshold = 2.0;
+      const transitionRange = 0.4;
       const tStart = threshold - transitionRange / 2;
       const tEnd = threshold + transitionRange / 2;
 
@@ -1629,12 +1630,28 @@
         if (dist < closestDist) { closestDist = dist; closestCountry = name; }
       }
       if (!closestCountry) {
-        // Fallback: pick the country with the most keyword data
-        let maxCount = 0;
+        // Fallback: pick the country with the most VALID province matches
+        let bestCountry = null;
+        let bestMatch = 0;
         for (const c in this.provinceKeywords) {
-          const cnt = Object.keys(this.provinceKeywords[c]).length;
-          if (cnt > maxCount && REGION_DATA[c] && PROVINCE_CENTERS[c]) { maxCount = cnt; closestCountry = c; }
+          if (!REGION_DATA[c] || !PROVINCE_CENTERS[c]) continue;
+          const pkKeys = Object.keys(this.provinceKeywords[c]);
+          // Count how many keyword keys are exact province names in REGION_DATA[c]
+          let match = 0;
+          for (const k of pkKeys) {
+            if (REGION_DATA[c].includes(k)) match++;
+          }
+          if (match > bestMatch) { bestMatch = match; bestCountry = c; }
         }
+        // If no exact matches, fall back to raw keyword count (first country with data)
+        if (bestMatch === 0) {
+          bestMatch = 0;
+          for (const c in this.provinceKeywords) {
+            const cnt = Object.keys(this.provinceKeywords[c]).length;
+            if (cnt > bestMatch) { bestMatch = cnt; bestCountry = c; }
+          }
+        }
+        closestCountry = bestCountry;
       }
       if (!closestCountry) {
         this._provinceClusterData = [];
@@ -1644,12 +1661,16 @@
       }
       const provinces = getProvinces(closestCountry);
       const clusterData = [];
+      let matched = 0;
       for (const prov of provinces) {
         const provData = this.provinceKeywords[closestCountry]?.[prov.name];
         if (!provData || provData.length === 0) continue;
+        matched++;
         const pos = this.toScreen(prov.cx, prov.cy);
         const kwCount = Math.min(provData.length, 3);
-        const radius = Math.max(35, kwCount * 10 + 15);
+        // Circle radius scales with zoom (~8km/px at zoom=2), kept small to avoid excessive clustering
+        // At zoom=2.5: ~20px diameter ≈ 40km (prevents large clusters), at zoom=4: ~32px ≈ 64km
+        const radius = Math.max(8, kwCount * 3 + 5) * Math.max(1, this.zoom) / 2;
         clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius });
       }
       this._provinceClusterData = clusterData;
@@ -1721,20 +1742,27 @@
       // Background circle
       this.ctx.beginPath();
       this.ctx.arc(x, y, radius, 0, Math.PI * 2);
-      this.ctx.fillStyle = `rgba(15, 23, 42, ${Math.min(baseAlpha * 0.95, 0.95)})`;
+      this.ctx.fillStyle = `rgba(15, 23, 42, ${Math.min(baseAlpha * 0.75, 0.9)})`;
       this.ctx.fill();
+      // Border ring
+      this.ctx.strokeStyle = `rgba(148, 163, 184, ${baseAlpha * 0.3})`;
+      this.ctx.lineWidth = 1;
+      this.ctx.stroke();
       // Title
-      this.ctx.fillStyle = `rgba(241, 245, 249, ${baseAlpha})`;
-      this.ctx.font = 'bold 10px sans-serif';
-      this.ctx.fillText(title, x, y - radius + 14);
+      const titleSize = Math.max(9, Math.round(radius / 3.5));
+      this.ctx.fillStyle = `rgba(148, 163, 184, ${baseAlpha})`;
+      this.ctx.font = `bold ${titleSize}px sans-serif`;
+      this.ctx.fillText(title, x, y - radius * 0.55);
       // Keywords
       keywords.forEach((kw, i) => {
-        const fs = Math.max(9, 12 - i * 2);
+        const fs = Math.max(8, Math.round(titleSize * 0.85 - i * 1.5));
         const color = this.colors[i % this.colors.length];
-        const offsetY = y + (i - keywords.length / 2 + 0.5) * (fs + 3);
-        this.ctx.fillStyle = color; // alpha handled by ctx.globalAlpha
+        const totalH = keywords.length * (fs + 4);
+        const startY = y - totalH / 2 + fs / 2 + 2;
+        const offsetY = startY + i * (fs + 4);
+        this.ctx.fillStyle = color;
         this.ctx.font = (i === 0 ? 'bold ' : '') + fs + 'px sans-serif';
-        this.ctx.fillText(kw.name, x, offsetY + 5);
+        this.ctx.fillText(kw.name, x, offsetY);
       });
     }
 
@@ -1945,6 +1973,24 @@
       this.baseScale = Math.min(scaleX, scaleY) * 0.9;
       this.panX = (this.width - this.geoW * this.baseScale) / 2;
       this.panY = (this.height - this.geoH * this.baseScale) / 2;
+      this.render();
+    }
+
+    // Pan map to center on a specific country (or reset to world view if country is empty)
+    panToCountry(country) {
+      if (!country) { this.resetView(); return; }
+      const cd = WORLD_MAP_PATHS[country];
+      if (!cd) return;
+      const targetZoom = 2.5; // zoom level that shows most/all of a country well
+      this.zoom = Math.max(1, Math.min(targetZoom, this.maxZoom));
+      // Adjust baseScale if needed
+      const scaleX = this.width / this.geoW;
+      const scaleY = this.height / this.geoH;
+      this.baseScale = Math.min(scaleX, scaleY) * 0.9;
+      // Center the country in the viewport
+      this.panX = this.width / 2 - (cd.cx + 180) * this.baseScale * this.zoom;
+      this.panY = this.height / 2 - (90 - cd.cy) * this.baseScale * this.zoom;
+      this._provinceCycleDirty = true; // reset cycle when panning to new country
       this.render();
     }
 
