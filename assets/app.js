@@ -1264,14 +1264,15 @@
       this.geoH = 180;
       // Province cloud cycle animation state
       this._provinceCycleGroups = [];   // array of index arrays, each group overlaps
-      this._provinceClusterData = [];    // {x, y, keywords, title, radius, provName}[] all visible clusters
+      this._provinceClusterData = [];    // {x, y, keywords, title, radius}[] all visible clusters
       this._provinceCycleIdx = 0;        // current group index
       this._provinceCycleFade = 0;      // 0~1 fade alpha
-      this._provinceCyclePhase = 'in';    // 'in' | 'hold' | 'out'
-      this._provinceCycleTimer = null;   // timestamp of phase start
+      this._provinceCyclePhase = 'in';   // 'in' | 'hold' | 'out'
+      this._provinceCycleTimer = null;  // timestamp of cycle start
       this._provinceCycleRaf = null;    // requestAnimationFrame id
-      this._lastProvinceCycleKey = '';   // key to detect zoom/pan changes
-      this._provinceCycleDirty = false;  // true when cycle needs restart
+      this._provinceCycleCycleCount = 0; // completed cycle count for group switching
+      this._lastProvinceCycleKey = '';  // key to detect zoom/pan changes
+      this._provinceCycleDirty = false; // true when cycle needs restart
       this.setupCanvas();
       this.aggregateKeywords();
       this.initEvents();
@@ -1575,13 +1576,14 @@
         this.drawCountryLabels(1);
         this._stopProvinceCycle(); // clean up animation
       } else if (this.zoom > tEnd) {
-        // Province mode: precompute cluster data, detect overlaps, start animation
+        // Province mode: collect cluster data, detect overlaps, then animate
         const cycleKey = Math.round(this.zoom * 100) + '_' + Math.round(this.panX) + '_' + Math.round(this.panY);
         if (cycleKey !== this._lastProvinceCycleKey) {
           this._lastProvinceCycleKey = cycleKey;
           this._provinceCycleDirty = true;
+          this._collectProvinceClusterData(); // populate groups before animation starts
         }
-        this._animateProvinceClouds();
+        this._animateProvinceClouds(); // starts RAF if not running; RAF calls render() each tick
       } else {
         this.drawCountryLabels(1 - (this.zoom - tStart) / transitionRange);
         this.drawProvinceLabels((this.zoom - tStart) / transitionRange);
@@ -1611,26 +1613,21 @@
       this.ctx.globalAlpha = 1;
     }
 
-    drawProvinceLabels(alpha) {
-      if (alpha <= 0) return;
-      this.ctx.globalAlpha = alpha;
-      // Find which country is most visible in viewport center
+    // Collect province cluster data and compute overlap groups (called before animation starts)
+    _collectProvinceClusterData() {
       const center = this.toGeo(this.width / 2, this.height / 2);
       let closestCountry = null;
       let closestDist = Infinity;
       for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
-        // Only consider countries that have province data
         if (!REGION_DATA[name] || !PROVINCE_CENTERS[name]) continue;
         const dx = center.lon - data.cx;
         const dy = center.lat - data.cy;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closestCountry = name;
-        }
+        if (dist < closestDist) { closestDist = dist; closestCountry = name; }
       }
       if (!closestCountry) {
-        this.ctx.globalAlpha = 1;
+        this._provinceClusterData = [];
+        this._provinceCycleGroups = [];
         return;
       }
       const provinces = getProvinces(closestCountry);
@@ -1642,31 +1639,38 @@
         if (!this.isInViewport(pos.x, pos.y, 60)) continue;
         const kwCount = Math.min(provData.length, 3);
         const radius = Math.max(35, kwCount * 10 + 15);
-        clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius, provName: prov.name });
+        clusterData.push({ x: pos.x, y: pos.y, keywords: provData.slice(0, kwCount), title: tr(prov.name), radius });
       }
-      // Store for animation
       this._provinceClusterData = clusterData;
-      // Compute overlap groups
       this._provinceCycleGroups = this._computeOverlapGroups(clusterData);
+    }
 
-      // Draw based on cycle state
-      if (this._provinceCycleGroups.length > 0) {
-        // Find the group that contains the current index
-        const group = this._provinceCycleGroups[this._provinceCycleIdx] || [];
-        const fadeAlpha = this._provinceCycleFade * alpha;
-        this.ctx.globalAlpha = fadeAlpha;
+    // Draw province clusters based on current animation state
+    _drawProvinceClusterLayer(alpha) {
+      const clusterData = this._provinceClusterData;
+      const groups = this._provinceCycleGroups;
+      if (!clusterData || clusterData.length === 0) return;
+      this.ctx.globalAlpha = alpha;
+      if (groups.length > 0) {
+        // Cycling mode: draw only the current group's clusters
+        const group = groups[this._provinceCycleIdx] || [];
         for (const idx of group) {
           const c = clusterData[idx];
-          if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, fadeAlpha);
+          if (c) this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, alpha);
         }
-        this.ctx.globalAlpha = 1;
       } else {
-        // No overlaps — draw all clusters at full alpha
+        // No overlaps — draw all at full alpha
         for (const c of clusterData) {
           this._drawProvinceCluster(c.x, c.y, c.keywords, c.title, c.radius, alpha);
         }
       }
       this.ctx.globalAlpha = 1;
+    }
+
+    drawProvinceLabels(alpha) {
+      if (alpha <= 0) return;
+      this._collectProvinceClusterData();
+      this._drawProvinceClusterLayer(alpha);
     }
 
     drawKeywordCluster(x, y, keywords, title, fontSize) {
@@ -1771,39 +1775,40 @@
       this._provinceCycleFade = 0;
       this._provinceCyclePhase = 'in';
       this._provinceCycleIdx = 0;
+      this._provinceCycleCycleCount = 0;
     }
 
     _animateProvinceClouds() {
       const groups = this._provinceCycleGroups;
       if (!groups || groups.length === 0) return;
 
-      // Start/restart cycle if dirty
+      // Start/restart cycle if dirty (zoom/pan changed)
       if (this._provinceCycleDirty) {
         this._provinceCycleDirty = false;
         this._provinceCycleIdx = 0;
         this._provinceCycleFade = 0;
         this._provinceCyclePhase = 'in';
         this._provinceCycleTimer = null;
+        this._provinceCycleCycleCount = 0;
       }
 
-      // Phase durations (ms)
+      // Phase durations (ms): fade-in 0.5s, hold 2.5s, fade-out 0.5s
       const FADE_IN_MS = 500;
       const HOLD_MS = 2500;
       const FADE_OUT_MS = 500;
-      const CYCLE_MS = FADE_IN_MS + HOLD_MS + FADE_OUT_MS; // 3.5s total per province
+      const CYCLE_MS = FADE_IN_MS + HOLD_MS + FADE_OUT_MS; // 3.5s per province
 
       if (this._provinceCycleRaf === null) {
+        this._provinceCycleTimer = performance.now();
         const tick = (now) => {
           if (!this._provinceCycleGroups.length) {
             this._provinceCycleRaf = null;
             return;
           }
-          const elapsed = this._provinceCycleTimer !== null ? now - this._provinceCycleTimer : 0;
+          const elapsed = now - this._provinceCycleTimer;
           const cyclePos = elapsed % CYCLE_MS;
 
-          let prevPhase = this._provinceCyclePhase;
           let newFade = 0;
-
           if (cyclePos < FADE_IN_MS) {
             this._provinceCyclePhase = 'in';
             newFade = cyclePos / FADE_IN_MS;
@@ -1814,21 +1819,48 @@
             this._provinceCyclePhase = 'out';
             newFade = 1 - (cyclePos - FADE_IN_MS - HOLD_MS) / FADE_OUT_MS;
           }
-
           this._provinceCycleFade = Math.max(0, Math.min(1, newFade));
 
-          // Advance to next group on each new cycle
-          if (cyclePos < CYCLE_MS - 16 && elapsed > CYCLE_MS - 16) {
+          // Advance to next group when a full cycle completes
+          const cyclesCompleted = Math.floor(elapsed / CYCLE_MS);
+          if (cyclesCompleted !== this._provinceCycleCycleCount) {
+            this._provinceCycleCycleCount = cyclesCompleted;
             this._provinceCycleIdx = (this._provinceCycleIdx + 1) % this._provinceCycleGroups.length;
-            this._provinceCycleTimer = now; // reset timer for next group
+            this._provinceCycleTimer = now;
           }
 
+          // Redraw map with new fade alpha (direct canvas redraw, not render() to avoid recursion)
+          this._redrawMapWithProvinceFade();
           this._provinceCycleRaf = requestAnimationFrame(tick);
-          this.render(); // re-draw with new fade alpha
         };
-        this._provinceCycleTimer = performance.now();
         this._provinceCycleRaf = requestAnimationFrame(tick);
       }
+    }
+
+    // Redraw just the province clouds on top of the existing map canvas
+    _redrawMapWithProvinceFade() {
+      if (!this._provinceClusterData || this._provinceClusterData.length === 0) return;
+      // Clear only the keyword label area (re-render map + clouds)
+      this._buildHitPaths();
+      // Draw ocean
+      this.ctx.fillStyle = '#0f172a';
+      this.ctx.fillRect(0, 0, this.width, this.height);
+      // Draw country fills
+      for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
+        const count = this.getDreamCount(name);
+        const fill = this.getCountryColor(name, count);
+        this.drawCountryPathFill(data.path, fill);
+      }
+      // Draw country strokes
+      for (const [name, data] of Object.entries(WORLD_MAP_PATHS)) {
+        if (name === this.hoverCountry) continue;
+        this.drawCountryPathStroke(data.path, '#334155');
+      }
+      if (this.hoverCountry && WORLD_MAP_PATHS[this.hoverCountry]) {
+        this.drawCountryPathStroke(WORLD_MAP_PATHS[this.hoverCountry].path, '#06b6d4');
+      }
+      // Draw province clusters with current fade
+      this._drawProvinceClusterLayer(this._provinceCycleFade);
     }
 
     handleHover(e) {
