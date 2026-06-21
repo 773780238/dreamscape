@@ -1769,10 +1769,16 @@
     // Compute groups of overlapping clusters.
     // Returns { groups, nonOverlapping }:
     //   - nonOverlapping: indices of circles that don't overlap anyone → always visible
-    //   - groups: alternating groups of mutually-overlapping circles
+    //   - groups: alternating groups where members within each group DON'T overlap each other
+    //
+    // Algorithm: Greedy partition into maximum independent sets.
+    // Sort by overlap count (ascending), then greedily assign each circle to the first group
+    // where it doesn't overlap with existing members.
     _computeOverlapGroups(clusters) {
       if (!clusters || clusters.length === 0) return { groups: [], nonOverlapping: [] };
       const n = clusters.length;
+
+      // Build overlap graph
       const adj = Array.from({ length: n }, () => []);
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
@@ -1785,32 +1791,47 @@
           }
         }
       }
+
+      // Separate completely non-overlapping circles
       const nonOverlapping = [];
-      const overlappingIdxs = new Set();
+      const overlappingIndices = [];
       for (let i = 0; i < n; i++) {
         if (adj[i].length === 0) nonOverlapping.push(i);
-        else overlappingIdxs.add(i);
+        else overlappingIndices.push(i);
       }
-      // If no overlaps at all, all clusters are nonOverlapping → no animation needed
-      if (overlappingIdxs.size === 0) return { groups: [], nonOverlapping };
 
-      // Build connected components from overlapping circles
-      const groups = [];
-      const used = new Set();
-      for (const start of overlappingIdxs) {
-        if (used.has(start)) continue;
-        const group = [];
-        const queue = [start];
-        used.add(start);
-        while (queue.length > 0) {
-          const cur = queue.shift();
-          group.push(cur);
-          for (const nb of adj[cur]) {
-            if (!used.has(nb)) { used.add(nb); queue.push(nb); }
+      // If no overlaps at all, all clusters are nonOverlapping → no animation needed
+      if (overlappingIndices.length === 0) return { groups: [], nonOverlapping };
+
+      // Greedy partition into maximum independent sets:
+      // Sort by overlap count ascending (fewest overlaps first → easier to place)
+      overlappingIndices.sort((a, b) => adj[a].length - adj[b].length);
+
+      const groups = []; // Each group is a set of indices that DON'T overlap each other
+
+      for (const idx of overlappingIndices) {
+        // Try to add to first existing group where it doesn't overlap
+        let placed = false;
+        for (const group of groups) {
+          let canJoin = true;
+          for (const memberIdx of group) {
+            if (adj[idx].includes(memberIdx)) {
+              canJoin = false;
+              break;
+            }
+          }
+          if (canJoin) {
+            group.push(idx);
+            placed = true;
+            break;
           }
         }
-        groups.push(group);
+        // If can't fit in any existing group, create a new group
+        if (!placed) {
+          groups.push([idx]);
+        }
       }
+
       return { groups, nonOverlapping };
     }
 
